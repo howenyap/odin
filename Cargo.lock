@@ -216,6 +216,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "html2text",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tantivy",
+ "time",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -359,18 +380,6 @@ name = "clap_lex"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
-
-[[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "colorchoice"
@@ -1479,20 +1488,11 @@ name = "odin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
- "html2text",
+ "clap",
  "reqwest",
- "scraper",
  "serde",
  "serde_json",
- "sqlx",
- "tantivy",
- "time",
  "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]
