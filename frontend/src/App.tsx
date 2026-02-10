@@ -1,0 +1,296 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+
+const API_BASE = "http://localhost:3000";
+
+type SearchResultItem = {
+  url: string;
+  title?: string | null;
+  excerpt?: string | null;
+  score: number;
+};
+
+type SearchResponse = {
+  total_hits: number;
+  results: SearchResultItem[];
+};
+
+type LoadState = "idle" | "loading" | "error" | "success";
+
+const get_hostname = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
+export default function App() {
+  const [draft_query, set_draft_query] = useState("");
+  const [active_query, set_active_query] = useState("");
+  const [results, set_results] = useState<SearchResultItem[]>([]);
+  const [total_hits, set_total_hits] = useState(0);
+  const [state, set_state] = useState<LoadState>("idle");
+  const [error_message, set_error_message] = useState<string | null>(null);
+  const abort_ref = useRef<AbortController | null>(null);
+
+  const trimmed_draft_query = useMemo(() => draft_query.trim(), [draft_query]);
+
+  const update_url_query = useCallback((next_query: string) => {
+    const params = new URLSearchParams(window.location.search);
+
+    if (next_query) {
+      params.set("q", next_query);
+    } else {
+      params.delete("q");
+    }
+
+    const next_search = params.toString();
+    const next_url = next_search
+      ? `${window.location.pathname}?${next_search}`
+      : window.location.pathname;
+
+    window.history.pushState({}, "", next_url);
+  }, []);
+
+  const run_search = useCallback(
+    (next_query: string) => {
+      abort_ref.current?.abort();
+
+      if (!next_query) {
+        set_state("idle");
+        set_results([]);
+        set_total_hits(0);
+        set_error_message(null);
+        return;
+      }
+
+      const controller = new AbortController();
+      abort_ref.current = controller;
+      set_state("loading");
+      set_error_message(null);
+
+      const url = `${API_BASE}/v1/search?q=${encodeURIComponent(next_query)}`;
+
+      fetch(url, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Request failed with ${response.status}`);
+          }
+          return (await response.json()) as SearchResponse;
+        })
+        .then((payload) => {
+          set_results(payload.results ?? []);
+          set_total_hits(payload.total_hits ?? 0);
+          set_state("success");
+        })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          set_state("error");
+          set_error_message(
+            error instanceof Error ? error.message : "Unknown error",
+          );
+        });
+    },
+    [set_error_message, set_results, set_state, set_total_hits],
+  );
+
+  const apply_query_from_url = useCallback(() => {
+    const params = new URLSearchParams(window.location.search);
+    const next_query = (params.get("q") ?? "").trim();
+
+    set_draft_query(next_query);
+    set_active_query(next_query);
+    run_search(next_query);
+  }, [run_search]);
+
+  useEffect(() => {
+    apply_query_from_url();
+  }, [apply_query_from_url]);
+
+  useEffect(() => {
+    const handle_popstate = () => {
+      apply_query_from_url();
+    };
+
+    window.addEventListener("popstate", handle_popstate);
+    return () => window.removeEventListener("popstate", handle_popstate);
+  }, [apply_query_from_url]);
+
+  const show_results = active_query.length > 0;
+  const title = show_results ? `About ${total_hits} results` : "Results";
+
+  return (
+    <div className="min-h-screen bg-stone-50 text-stone-900">
+      {show_results ? (
+        <>
+          <header className="border-b border-stone-200 bg-white px-4 py-3">
+            <div className="mx-auto flex max-w-2xl items-center gap-3">
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  set_draft_query("");
+                  set_active_query("");
+                  update_url_query("");
+                  run_search("");
+                }}
+                className="shrink-0 text-2xl font-medium text-stone-800 hover:text-stone-600"
+              >
+                Odin
+              </a>
+              <form
+                className="min-w-0 flex-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  set_active_query(trimmed_draft_query);
+                  update_url_query(trimmed_draft_query);
+                  run_search(trimmed_draft_query);
+                }}
+              >
+                <div className="flex w-full items-center rounded-full border border-stone-300 bg-stone-50 px-4 py-2 focus-within:border-stone-400 focus-within:ring-1 focus-within:ring-stone-300">
+                  <span className="mr-2 text-stone-500">
+                    <svg viewBox="0 0 24 24" className="size-5">
+                      <circle
+                        cx="11"
+                        cy="11"
+                        r="7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      />
+                      <path
+                        d="M16.5 16.5L21 21"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </span>
+                  <input
+                    type="text"
+                    className="min-w-0 flex-1 bg-transparent text-stone-900 placeholder-stone-400 outline-none"
+                    placeholder="Search the web..."
+                    value={draft_query}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      set_draft_query(event.target.value)
+                    }
+                  />
+                  {draft_query ? (
+                    <button
+                      type="button"
+                      onClick={() => set_draft_query("")}
+                      className="rounded p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-700"
+                      aria-label="Clear search"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        className="size-5"
+                      >
+                        <path
+                          d="M6 6l12 12M18 6l-12 12"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+              </form>
+            </div>
+          </header>
+          <section className="mx-auto max-w-2xl px-4 py-6">
+            <div className="mb-4 text-sm text-stone-500">{title}</div>
+            <div className="space-y-6">
+              {state === "loading" ? (
+                <div className="py-8 text-center text-stone-500">
+                  Searching...
+                </div>
+              ) : null}
+              {state === "error" ? (
+                <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-red-800">
+                  Search failed: {error_message}
+                </div>
+              ) : null}
+              {state === "success" && results.length === 0 ? (
+                <div className="py-8 text-center text-stone-500">
+                  No results yet.
+                </div>
+              ) : null}
+
+              {results.map((result) => (
+                <article key={result.url} className="group">
+                  <a
+                    href={result.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block"
+                  >
+                    <div className="mb-0.5 text-xs text-stone-500 group-hover:text-stone-700">
+                      {get_hostname(result.url)}
+                    </div>
+                    <div className="text-lg font-medium text-stone-900 group-hover:underline">
+                      {result.title?.trim() || "Untitled"}
+                    </div>
+                  </a>
+                </article>
+              ))}
+            </div>
+          </section>
+        </>
+      ) : (
+        <section className="flex min-h-screen flex-col items-center justify-center px-4">
+          <div className="flex w-full max-w-xl flex-col items-center gap-8">
+            <h1 className="text-8xl font-medium text-stone-800">Odin</h1>
+            <form
+              className="w-full"
+              onSubmit={(event) => {
+                event.preventDefault();
+                set_active_query(trimmed_draft_query);
+                update_url_query(trimmed_draft_query);
+                run_search(trimmed_draft_query);
+              }}
+            >
+              <div className="flex items-center rounded-full border border-stone-300 bg-white px-4 py-3 shadow-sm focus-within:border-stone-400 focus-within:ring-2 focus-within:ring-stone-200">
+                <span className="mr-3 text-stone-500">
+                  <svg viewBox="0 0 24 24" className="size-5">
+                    <circle
+                      cx="11"
+                      cy="11"
+                      r="7"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <path
+                      d="M16.5 16.5L21 21"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+                <input
+                  type="text"
+                  className="min-w-0 flex-1 bg-transparent text-stone-900 placeholder-stone-400 outline-none"
+                  placeholder="Search the web..."
+                  value={draft_query}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                    set_draft_query(event.target.value)
+                  }
+                />
+              </div>
+            </form>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
