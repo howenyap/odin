@@ -15,6 +15,7 @@ pub struct AppState {
     pub fields: IndexFields,
     pub fetch_semaphore: Arc<Semaphore>,
     pub http_client: reqwest::Client,
+    pub ingest_token: Option<String>,
 }
 
 #[derive(Clone, Copy)]

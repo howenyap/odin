@@ -1,5 +1,7 @@
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use reqwest::header::AUTHORIZATION;
 use reqwest::header::CONTENT_TYPE;
 use scraper::{Html, Selector};
 use sqlx::SqlitePool;
@@ -14,8 +16,10 @@ use crate::r#type::{AppState, IngestUrlsRequest, IngestUrlsResponse};
 
 pub(super) async fn ingest_urls(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<IngestUrlsRequest>,
 ) -> Result<Json<IngestUrlsResponse>, AppError> {
+    authorize(&headers, state.ingest_token.as_deref())?;
     info!("ingest request received: {} urls", payload.urls.len());
     if payload.urls.is_empty() {
         return Ok(Json(IngestUrlsResponse {
@@ -31,12 +35,9 @@ pub(super) async fn ingest_urls(
     let mut deduped = 0usize;
 
     for raw_url in payload.urls {
-        let normalized = match normalize_url(&raw_url) {
-            Some(u) => u,
-            None => {
-                deduped += 1;
-                continue;
-            }
+        let Some(normalized) = normalize_url(&raw_url) else {
+            deduped += 1;
+            continue;
         };
 
         let now = now_rfc3339();
@@ -66,6 +67,32 @@ pub(super) async fn ingest_urls(
     }
 
     Ok(Json(IngestUrlsResponse { accepted, deduped }))
+}
+
+fn authorize(headers: &HeaderMap, expected_token: Option<&str>) -> Result<(), AppError> {
+    let expected = match expected_token {
+        Some(value) => value,
+        None => return Ok(()),
+    };
+
+    let raw_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let token = raw_header
+        .strip_prefix("Bearer ")
+        .or_else(|| raw_header.strip_prefix("bearer "))
+        .unwrap_or(raw_header)
+        .trim();
+
+    if token.is_empty() {
+        return Err(AppError::unauthorized("missing admin token"));
+    }
+    if token != expected {
+        return Err(AppError::unauthorized("invalid admin token"));
+    }
+
+    Ok(())
 }
 
 async fn process_url(state: AppState, url: String) -> anyhow::Result<()> {
@@ -126,7 +153,14 @@ async fn process_url(state: AppState, url: String) -> anyhow::Result<()> {
     let html = match response.text().await {
         Ok(html) => html,
         Err(err) => {
-            mark_failed(&state.db, &url, http_status, &content_type, &err.to_string()).await?;
+            mark_failed(
+                &state.db,
+                &url,
+                http_status,
+                &content_type,
+                &err.to_string(),
+            )
+            .await?;
             info!(
                 "ingest end: {} status=failed reason=read_body_error error={} elapsed_ms={}",
                 url,
@@ -141,7 +175,14 @@ async fn process_url(state: AppState, url: String) -> anyhow::Result<()> {
     let excerpt = make_excerpt(&cleaned, 280);
 
     if let Err(err) = index_document(&state, &url, &title, &cleaned, &excerpt).await {
-        mark_failed(&state.db, &url, http_status, &content_type, &err.to_string()).await?;
+        mark_failed(
+            &state.db,
+            &url,
+            http_status,
+            &content_type,
+            &err.to_string(),
+        )
+        .await?;
         info!(
             "ingest end: {} status=failed reason=index_error error={} elapsed_ms={}",
             url,

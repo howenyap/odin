@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 axum = "0.7"
+dotenvy = "0.15.7"
 html2text = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
 scraper = "0.19"

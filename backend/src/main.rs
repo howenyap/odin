@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::env;
 
 use anyhow::Context;
 use sqlx::SqlitePool;
@@ -57,6 +58,9 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .context("build http client")?;
 
+    dotenvy::dotenv().ok();
+    let ingest_token = load_admin_token().context("load ADMIN_TOKEN")?;
+
     let state = AppState {
         db,
         index,
@@ -65,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
         fields,
         fetch_semaphore: Arc::new(Semaphore::new(10)),
         http_client,
+        ingest_token,
     };
 
     let app = build_router(state);
@@ -74,6 +79,22 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+fn load_admin_token() -> anyhow::Result<Option<String>> {
+    match env::var("ADMIN_TOKEN") {
+        Ok(value) => {
+            let token = value.trim();
+            if token.is_empty() {
+                anyhow::bail!("ADMIN_TOKEN is set but empty");
+            }
+            Ok(Some(token.to_string()))
+        }
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("ADMIN_TOKEN is not valid unicode");
+        }
+    }
 }
 
 fn build_schema() -> (Schema, IndexFields) {
