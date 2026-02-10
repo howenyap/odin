@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
 #[command(name = "odin", about = "CLI for querying and ingesting URLs")]
@@ -25,10 +25,22 @@ enum Commands {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct Config {
     base_url: String,
     ingest_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SearchResponse {
+    total_hits: u64,
+    results: Vec<SearchResultItem>,
+}
+
+#[derive(Deserialize)]
+struct SearchResultItem {
+    url: String,
+    title: Option<String>,
 }
 
 #[tokio::main]
@@ -46,7 +58,7 @@ async fn main() -> Result<()> {
                 .send()
                 .await
                 .context("failed to send query request")?;
-            handle_response(response).await?;
+            handle_query_response(response).await?;
         }
         Commands::Ingest { urls } => {
             if urls.is_empty() {
@@ -72,11 +84,38 @@ async fn main() -> Result<()> {
 }
 
 fn load_config(path: &Path) -> Result<Config> {
+    if !path.exists() {
+        let config = default_config();
+        write_config(path, &config)?;
+        return Ok(config);
+    }
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read config file {}", path.display()))?;
     let config: Config = serde_json::from_str(&raw)
         .with_context(|| format!("failed to parse config file {}", path.display()))?;
     Ok(config)
+}
+
+fn default_config() -> Config {
+    Config {
+        base_url: "http://localhost:3000".to_string(),
+        ingest_token: None,
+    }
+}
+
+fn write_config(path: &Path, config: &Config) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create config directory {}", parent.display())
+            })?;
+        }
+    }
+    let raw =
+        serde_json::to_string_pretty(config).context("failed to serialize config file")?;
+    fs::write(path, raw)
+        .with_context(|| format!("failed to write config file {}", path.display()))?;
+    Ok(())
 }
 
 fn auth_header(token: &str) -> Result<HeaderValue> {
@@ -96,4 +135,40 @@ async fn handle_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{}", body);
     Ok(())
+}
+
+async fn handle_query_response(response: reqwest::Response) -> Result<()> {
+    let status = response.status();
+    let body = response.text().await.context("failed to read response")?;
+    if !status.is_success() {
+        anyhow::bail!("request failed with status {}: {}", status, body);
+    }
+    let response: SearchResponse =
+        serde_json::from_str(&body).context("failed to parse search response")?;
+
+    if response.results.is_empty() {
+        println!("No results.");
+        return Ok(());
+    }
+
+    for (index, item) in response.results.iter().enumerate() {
+        let title = item
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(item.url.as_str());
+        let label = if item.url.trim().is_empty() {
+            title.to_string()
+        } else {
+            hyperlink(&item.url, title)
+        };
+        println!("{:>2}. {}", index + 1, label);
+    }
+
+    Ok(())
+}
+
+fn hyperlink(url: &str, text: &str) -> String {
+    format!("\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\", url, text)
 }
