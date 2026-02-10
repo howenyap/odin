@@ -20,6 +20,7 @@ enum Commands {
     Query {
         query: String,
     },
+    List,
     Ingest {
         #[arg(short = 'f', long = "file")]
         file: Option<PathBuf>,
@@ -45,6 +46,18 @@ struct SearchResultItem {
     title: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct BookmarksResponse {
+    results: Vec<BookmarkListItem>,
+}
+
+#[derive(Deserialize)]
+struct BookmarkListItem {
+    url: String,
+    title: Option<String>,
+    status: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -61,6 +74,14 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to send query request")?;
             handle_query_response(response).await?;
+        }
+        Commands::List => {
+            let response = client
+                .get(format!("{}/v1/bookmarks", base_url))
+                .send()
+                .await
+                .context("failed to send bookmarks request")?;
+            handle_bookmarks_response(response).await?;
         }
         Commands::Ingest { file, urls } => {
             let mut ingest_urls = Vec::new();
@@ -181,6 +202,38 @@ async fn handle_query_response(response: reqwest::Response) -> Result<()> {
             hyperlink(&item.url, title)
         };
         println!("{:>2}. {}", index + 1, label);
+    }
+
+    Ok(())
+}
+
+async fn handle_bookmarks_response(response: reqwest::Response) -> Result<()> {
+    let status = response.status();
+    let body = response.text().await.context("failed to read response")?;
+    if !status.is_success() {
+        anyhow::bail!("request failed with status {}: {}", status, body);
+    }
+    let response: BookmarksResponse =
+        serde_json::from_str(&body).context("failed to parse bookmarks response")?;
+
+    if response.results.is_empty() {
+        println!("No bookmarks.");
+        return Ok(());
+    }
+
+    for (index, item) in response.results.iter().enumerate() {
+        let title = item
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(item.url.as_str());
+        let label = if item.url.trim().is_empty() {
+            title.to_string()
+        } else {
+            hyperlink(&item.url, title)
+        };
+        println!("{:>2}. {} ({})", index + 1, label, item.status);
     }
 
     Ok(())

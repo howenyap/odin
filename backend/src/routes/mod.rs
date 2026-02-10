@@ -7,12 +7,14 @@ use crate::r#type::AppState;
 
 mod healthz;
 mod ingest;
+mod bookmarks;
 mod search;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz::healthz))
         .route("/v1/search", get(search::search))
+        .route("/v1/bookmarks", get(bookmarks::list_bookmarks))
         .route("/v1/ingest/urls", post(ingest::ingest_urls))
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())

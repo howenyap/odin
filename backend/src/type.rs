@@ -47,6 +47,19 @@ pub struct SearchResultItem {
     pub score: f32,
 }
 
+#[derive(Serialize)]
+pub struct BookmarksResponse {
+    pub results: Vec<BookmarkListItem>,
+}
+
+#[derive(Serialize)]
+pub struct BookmarkListItem {
+    pub url: String,
+    pub title: Option<String>,
+    pub status: String,
+    pub updated_at: String,
+}
+
 #[derive(Deserialize)]
 pub struct IngestUrlsRequest {
     pub urls: Vec<String>,
