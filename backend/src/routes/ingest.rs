@@ -240,16 +240,62 @@ async fn mark_failed(
 
 fn extract_text(html: &str) -> (Option<String>, String) {
     let document = Html::parse_document(html);
-    let title_selector = Selector::parse("title").unwrap();
-    let title = document
-        .select(&title_selector)
-        .next()
-        .map(|node| node.text().collect::<Vec<_>>().join(" "))
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
+    let title = extract_title(&document);
 
     let body_text = html2text::from_read(html.as_bytes(), 80);
     (title, body_text)
+}
+
+fn extract_title(document: &Html) -> Option<String> {
+    let og_title_selector = Selector::parse(r#"meta[property="og:title"]"#).unwrap();
+    let twitter_title_selector = Selector::parse(r#"meta[name="twitter:title"]"#).unwrap();
+    let h1_selector = Selector::parse("h1").unwrap();
+    let title_selector = Selector::parse("title").unwrap();
+
+    let candidates = [
+        select_meta_content(document, &og_title_selector),
+        select_meta_content(document, &twitter_title_selector),
+        select_text(document, &h1_selector),
+        select_text(document, &title_selector).and_then(|t| trim_site_suffix(&t)),
+    ];
+
+    candidates.into_iter().flatten().next()
+}
+
+fn select_meta_content(document: &Html, selector: &Selector) -> Option<String> {
+    document
+        .select(selector)
+        .next()
+        .and_then(|node| node.value().attr("content"))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+fn select_text(document: &Html, selector: &Selector) -> Option<String> {
+    document
+        .select(selector)
+        .next()
+        .map(|node| node.text().collect::<Vec<_>>().join(" "))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+fn trim_site_suffix(title: &str) -> Option<String> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    for delimiter in [" — ", " | ", " - ", " · "] {
+        if let Some((left, _)) = trimmed.split_once(delimiter) {
+            let left = left.trim();
+            if left.len() >= 6 {
+                return Some(left.to_string());
+            }
+        }
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn clean_text(input: &str) -> String {

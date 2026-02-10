@@ -22,7 +22,7 @@ use crate::r#type::{AppState, IndexFields};
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let data_dir = PathBuf::from("data");
+    let data_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data");
     let index_dir = data_dir.join("index");
     let db_path = data_dir.join("app.db");
 
