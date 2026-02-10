@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 const API_BASE = "http://localhost:3000";
 
@@ -15,8 +16,6 @@ type SearchResponse = {
   results: SearchResultItem[];
 };
 
-type LoadState = "idle" | "loading" | "error" | "success";
-
 const get_hostname = (url: string) => {
   try {
     return new URL(url).hostname;
@@ -28,11 +27,6 @@ const get_hostname = (url: string) => {
 export default function App() {
   const [draft_query, set_draft_query] = useState("");
   const [active_query, set_active_query] = useState("");
-  const [results, set_results] = useState<SearchResultItem[]>([]);
-  const [total_hits, set_total_hits] = useState(0);
-  const [state, set_state] = useState<LoadState>("idle");
-  const [error_message, set_error_message] = useState<string | null>(null);
-  const abort_ref = useRef<AbortController | null>(null);
 
   const trimmed_draft_query = useMemo(() => draft_query.trim(), [draft_query]);
 
@@ -53,49 +47,31 @@ export default function App() {
     window.history.pushState({}, "", next_url);
   }, []);
 
-  const run_search = useCallback(
-    (next_query: string) => {
-      abort_ref.current?.abort();
+  const { data, error, isError, isFetching, isSuccess } = useQuery({
+    queryKey: ["search", active_query],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, query] = queryKey as [string, string];
 
-      if (!next_query) {
-        set_state("idle");
-        set_results([]);
-        set_total_hits(0);
-        set_error_message(null);
-        return;
+      if (!query) {
+        return { total_hits: 0, results: [] } satisfies SearchResponse;
       }
 
-      const controller = new AbortController();
-      abort_ref.current = controller;
-      set_state("loading");
-      set_error_message(null);
+      const url = `${API_BASE}/v1/search?q=${encodeURIComponent(query)}`;
+      const response = await fetch(url, { signal });
 
-      const url = `${API_BASE}/v1/search?q=${encodeURIComponent(next_query)}`;
+      if (!response.ok) {
+        throw new Error(`Request failed with ${response.status}`);
+      }
 
-      fetch(url, { signal: controller.signal })
-        .then(async (response) => {
-          if (!response.ok) {
-            throw new Error(`Request failed with ${response.status}`);
-          }
-          return (await response.json()) as SearchResponse;
-        })
-        .then((payload) => {
-          set_results(payload.results ?? []);
-          set_total_hits(payload.total_hits ?? 0);
-          set_state("success");
-        })
-        .catch((error: unknown) => {
-          if (error instanceof DOMException && error.name === "AbortError") {
-            return;
-          }
-          set_state("error");
-          set_error_message(
-            error instanceof Error ? error.message : "Unknown error",
-          );
-        });
+      return (await response.json()) as SearchResponse;
     },
-    [set_error_message, set_results, set_state, set_total_hits],
-  );
+    enabled: active_query.length > 0,
+    placeholderData: (previous_data) => previous_data,
+  });
+
+  const results = data?.results ?? [];
+  const total_hits = data?.total_hits ?? 0;
+  const error_message = error instanceof Error ? error.message : "Unknown error";
 
   const apply_query_from_url = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
@@ -103,8 +79,7 @@ export default function App() {
 
     set_draft_query(next_query);
     set_active_query(next_query);
-    run_search(next_query);
-  }, [run_search]);
+  }, []);
 
   useEffect(() => {
     apply_query_from_url();
@@ -135,7 +110,6 @@ export default function App() {
                   set_draft_query("");
                   set_active_query("");
                   update_url_query("");
-                  run_search("");
                 }}
                 className="shrink-0 text-2xl font-medium text-stone-800 hover:text-stone-600"
               >
@@ -147,7 +121,6 @@ export default function App() {
                   event.preventDefault();
                   set_active_query(trimmed_draft_query);
                   update_url_query(trimmed_draft_query);
-                  run_search(trimmed_draft_query);
                 }}
               >
                 <div className="flex w-full items-center rounded-full border border-stone-300 bg-stone-50 px-4 py-2 focus-within:border-stone-400 focus-within:ring-1 focus-within:ring-stone-300">
@@ -179,28 +152,29 @@ export default function App() {
                       set_draft_query(event.target.value)
                     }
                   />
-                  {draft_query ? (
-                    <button
-                      type="button"
-                      onClick={() => set_draft_query("")}
-                      className="rounded p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-700"
-                      aria-label="Clear search"
+                  <button
+                    type="button"
+                    onClick={() => set_draft_query("")}
+                    className={`rounded p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-700 ${
+                      draft_query ? "" : "pointer-events-none opacity-0"
+                    }`}
+                    aria-label="Clear search"
+                    tabIndex={draft_query ? 0 : -1}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      className="size-5"
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                        className="size-5"
-                      >
-                        <path
-                          d="M6 6l12 12M18 6l-12 12"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                    </button>
-                  ) : null}
+                      <path
+                        d="M6 6l12 12M18 6l-12 12"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
                 </div>
               </form>
             </div>
@@ -208,17 +182,17 @@ export default function App() {
           <section className="mx-auto max-w-2xl px-4 py-6">
             <div className="mb-4 text-sm text-stone-500">{title}</div>
             <div className="space-y-6">
-              {state === "loading" ? (
+              {isFetching ? (
                 <div className="py-8 text-center text-stone-500">
                   Searching...
                 </div>
               ) : null}
-              {state === "error" ? (
+              {isError ? (
                 <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-red-800">
                   Search failed: {error_message}
                 </div>
               ) : null}
-              {state === "success" && results.length === 0 ? (
+              {isSuccess && results.length === 0 ? (
                 <div className="py-8 text-center text-stone-500">
                   No results yet.
                 </div>
@@ -254,7 +228,6 @@ export default function App() {
                 event.preventDefault();
                 set_active_query(trimmed_draft_query);
                 update_url_query(trimmed_draft_query);
-                run_search(trimmed_draft_query);
               }}
             >
               <div className="flex items-center rounded-full border border-stone-300 bg-white px-4 py-3 shadow-sm focus-within:border-stone-400 focus-within:ring-2 focus-within:ring-stone-200">
