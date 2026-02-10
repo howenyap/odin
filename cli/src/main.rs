@@ -21,6 +21,8 @@ enum Commands {
         query: String,
     },
     Ingest {
+        #[arg(short = 'f', long = "file")]
+        file: Option<PathBuf>,
         urls: Vec<String>,
     },
 }
@@ -60,9 +62,24 @@ async fn main() -> Result<()> {
                 .context("failed to send query request")?;
             handle_query_response(response).await?;
         }
-        Commands::Ingest { urls } => {
-            if urls.is_empty() {
-                anyhow::bail!("provide at least one url to ingest");
+        Commands::Ingest { file, urls } => {
+            let mut ingest_urls = Vec::new();
+            ingest_urls.extend(urls);
+            if let Some(path) = file {
+                let contents = fs::read_to_string(&path).with_context(|| {
+                    format!("failed to read ingest file {}", path.display())
+                })?;
+                ingest_urls.extend(
+                    contents
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_string),
+                );
+            }
+
+            if ingest_urls.is_empty() {
+                anyhow::bail!("provide at least one url or a non-empty file to ingest");
             }
             let mut headers = HeaderMap::new();
             if let Some(token) = config.ingest_token.as_deref() {
@@ -72,7 +89,7 @@ async fn main() -> Result<()> {
             let response = client
                 .post(format!("{}/v1/ingest/urls", base_url))
                 .headers(headers)
-                .json(&serde_json::json!({ "urls": urls }))
+                .json(&serde_json::json!({ "urls": ingest_urls }))
                 .send()
                 .await
                 .context("failed to send ingest request")?;
