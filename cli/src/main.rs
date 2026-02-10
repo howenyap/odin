@@ -9,14 +9,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Parser)]
 #[command(name = "odin", about = "CLI for querying and ingesting URLs")]
 struct Cli {
-    #[arg(long, default_value = "config.json")]
-    config: PathBuf,
+    #[arg(long)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    Config,
     Query {
         query: String,
     },
@@ -31,7 +32,8 @@ enum Commands {
 #[derive(Deserialize, Serialize)]
 struct Config {
     base_url: String,
-    ingest_token: Option<String>,
+    #[serde(alias = "ingest_token")]
+    admin_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,11 +63,15 @@ struct BookmarkListItem {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let config = load_config(&cli.config)?;
+    let config_path = resolve_config_path(cli.config);
+    let config = load_config(&config_path)?;
     let base_url = config.base_url.trim_end_matches('/');
 
     let client = reqwest::Client::new();
     match cli.command {
+        Commands::Config => {
+            println!("{}", config_path.display());
+        }
         Commands::Query { query } => {
             let response = client
                 .get(format!("{}/v1/search", base_url))
@@ -103,7 +109,7 @@ async fn main() -> Result<()> {
                 anyhow::bail!("provide at least one url or a non-empty file to ingest");
             }
             let mut headers = HeaderMap::new();
-            if let Some(token) = config.ingest_token.as_deref() {
+            if let Some(token) = config.admin_token.as_deref() {
                 headers.insert(AUTHORIZATION, auth_header(token)?);
             }
 
@@ -119,6 +125,23 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_config_path(config_arg: Option<PathBuf>) -> PathBuf {
+    config_arg.unwrap_or_else(default_config_path)
+}
+
+fn default_config_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(dir).join("odin").join("config.json");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("odin")
+            .join("config.json");
+    }
+    PathBuf::from("config.json")
 }
 
 fn load_config(path: &Path) -> Result<Config> {
@@ -137,7 +160,7 @@ fn load_config(path: &Path) -> Result<Config> {
 fn default_config() -> Config {
     Config {
         base_url: "http://localhost:3000".to_string(),
-        ingest_token: None,
+        admin_token: None,
     }
 }
 
