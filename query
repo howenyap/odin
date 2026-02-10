@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+    echo "Usage: ./query <query>" >&2
+    exit 1
+fi
+
+base_url="${ODIN_BASE_URL:-http://127.0.0.1:3000}"
+query="$1"
+
+curl -sS \
+    --get "${base_url}/v1/search" \
+    --data-urlencode "q=${query}"
+echo
