@@ -12,11 +12,13 @@
 - `cargo test`: Run tests (none currently defined).
 - `cargo fmt`: Format code with rustfmt.
 - `cargo clippy`: Lint for common Rust issues.
+- Frontend package management uses Bun (`bun install`, `bun add`, `bun run`).
 
 ## Coding Style & Naming Conventions
 - Indentation: 4 spaces (Rust standard).
 - Naming: `snake_case` for functions/variables, `CamelCase` for types.
 - Manage dependencies with `cargo add` rather than editing `Cargo.toml` directly.
+- Manage frontend dependencies with `bun add` rather than editing `package.json` directly.
 - Prefer explicit error contexts via `anyhow::Context` when adding new fallible calls.
 - Keep async boundaries clear; avoid blocking calls in request handlers.
 
