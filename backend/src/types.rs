@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use sqlx::SqlitePool;
 use tantivy::schema::Field;
 use tantivy::{Index, IndexReader, IndexWriter};
 use tokio::sync::{Mutex, Semaphore};
 
 #[derive(Clone)]
-pub struct AppState {
+pub struct Dependencies {
     pub db: SqlitePool,
     pub index: Index,
     pub reader: IndexReader,
@@ -15,7 +16,13 @@ pub struct AppState {
     pub fields: IndexFields,
     pub fetch_semaphore: Arc<Semaphore>,
     pub http_client: reqwest::Client,
-    pub ingest_token: Option<String>,
+    pub admin_token: String,
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub deps: Arc<Dependencies>,
+    pub services: crate::services::Services,
 }
 
 #[derive(Clone, Copy)]
@@ -29,7 +36,7 @@ pub struct IndexFields {
 
 #[derive(Deserialize)]
 pub struct SearchParams {
-    pub q: String,
+    pub query: String,
     pub page: Option<u32>,
     pub per_page: Option<u32>,
 }
@@ -53,8 +60,9 @@ pub struct BookmarksResponse {
     pub results: Vec<BookmarkListItem>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, FromRow)]
 pub struct BookmarkListItem {
+    pub id: i64,
     pub url: String,
     pub title: Option<String>,
     pub status: String,

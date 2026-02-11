@@ -1,9 +1,10 @@
+use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::env;
 
 use anyhow::Context;
+use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, HeaderMap, HeaderValue};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -12,12 +13,16 @@ use tantivy::schema::{STORED, STRING, Schema, TEXT};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::info;
 
-mod error;
-mod routes;
-mod r#type;
+mod controllers;
+mod errors;
+mod services;
+mod types;
 
-use crate::routes::build_router;
-use crate::r#type::{AppState, IndexFields};
+use crate::controllers::build_router;
+use crate::services::Services;
+use crate::types::{AppState, Dependencies, IndexFields};
+
+const CONCURRENT_FETCH_LIMIT: usize = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -52,25 +57,23 @@ async fn main() -> anyhow::Result<()> {
     let reader = index.reader()?;
     let writer = index.writer(50_000_000)?;
 
-    let http_client = reqwest::Client::builder()
-        .user_agent("odin/0.1")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .context("build http client")?;
+    let http_client = build_http_client()?;
 
     dotenvy::dotenv().ok();
-    let ingest_token = load_admin_token().context("load ADMIN_TOKEN")?;
+    let admin_token = load_admin_token().context("load ADMIN_TOKEN")?;
 
-    let state = AppState {
+    let deps = Arc::new(Dependencies {
         db,
         index,
         reader,
         writer: Arc::new(Mutex::new(writer)),
         fields,
-        fetch_semaphore: Arc::new(Semaphore::new(10)),
+        fetch_semaphore: Arc::new(Semaphore::new(CONCURRENT_FETCH_LIMIT)),
         http_client,
-        ingest_token,
-    };
+        admin_token,
+    });
+    let services = Services::new(deps.clone());
+    let state = AppState { deps, services };
 
     let app = build_router(state);
 
@@ -81,16 +84,34 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn load_admin_token() -> anyhow::Result<Option<String>> {
+fn build_http_client() -> anyhow::Result<reqwest::Client> {
+    let mut default_headers = HeaderMap::new();
+    default_headers.insert(ACCEPT, HeaderValue::from_static("text/html"));
+    default_headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .default_headers(default_headers)
+        .user_agent("odin-agent/0.1")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .context("build http client")?;
+
+    Ok(client)
+}
+
+fn load_admin_token() -> anyhow::Result<String> {
     match env::var("ADMIN_TOKEN") {
         Ok(value) => {
             let token = value.trim();
             if token.is_empty() {
                 anyhow::bail!("ADMIN_TOKEN is set but empty");
             }
-            Ok(Some(token.to_string()))
+            Ok(token.to_string())
         }
-        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotPresent) => {
+            anyhow::bail!("ADMIN_TOKEN is required but not set");
+        }
         Err(env::VarError::NotUnicode(_)) => {
             anyhow::bail!("ADMIN_TOKEN is not valid unicode");
         }
