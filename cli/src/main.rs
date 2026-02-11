@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         Commands::Query { query } => {
             let response = client
                 .get(format!("{}/v1/search", base_url))
-                .query(&[("q", query)])
+                .query(&[("query", query)])
                 .send()
                 .await
                 .context("failed to send query request")?;
@@ -274,6 +274,52 @@ async fn handle_bookmarks_response(response: reqwest::Response) -> Result<()> {
         return Ok(());
     }
 
+    let id_width = response
+        .results
+        .iter()
+        .map(|item| item.id.to_string().len())
+        .max()
+        .unwrap_or(2)
+        .max("ID".len());
+    let status_width = response
+        .results
+        .iter()
+        .map(|item| item.status.len())
+        .max()
+        .unwrap_or(6)
+        .max("Status".len());
+    let mut title_width = response
+        .results
+        .iter()
+        .map(|item| {
+            item.title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(item.url.as_str())
+                .len()
+        })
+        .max()
+        .unwrap_or(5)
+        .max("Title".len());
+    let title_width_cap = 80usize;
+    if title_width > title_width_cap {
+        title_width = title_width_cap;
+    }
+
+    println!(
+        "{:>id_width$}  {:<status_width$}  {:<title_width$}",
+        "ID",
+        "Status",
+        "Title"
+    );
+    println!(
+        "{:-<id_width$}  {:-<status_width$}  {:-<title_width$}",
+        "",
+        "",
+        ""
+    );
+
     for (index, item) in response.results.iter().enumerate() {
         let title = item
             .title
@@ -281,17 +327,12 @@ async fn handle_bookmarks_response(response: reqwest::Response) -> Result<()> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or(item.url.as_str());
-        let label = if item.url.trim().is_empty() {
-            title.to_string()
-        } else {
-            hyperlink(&item.url, title)
-        };
+        let title = truncate_with_ellipsis(title, title_width);
         println!(
-            "{:>2}. {:>6} {} ({})",
-            index + 1,
+            "{:>id_width$}  {:<status_width$}  {:<title_width$}",
             item.id,
-            label,
-            item.status
+            item.status,
+            title
         );
     }
 
@@ -322,4 +363,14 @@ fn hyperlink(url: &str, text: &str) -> String {
     } else {
         text.to_string()
     }
+}
+
+fn truncate_with_ellipsis(value: &str, max_width: usize) -> String {
+    if value.len() <= max_width {
+        return value.to_string();
+    }
+    if max_width <= 3 {
+        return value.chars().take(max_width).collect();
+    }
+    format!("{}...", value.chars().take(max_width - 3).collect::<String>())
 }

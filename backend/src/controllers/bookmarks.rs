@@ -5,6 +5,7 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use tracing::info;
 
 pub(super) async fn list_bookmarks(
     State(state): State<AppState>,

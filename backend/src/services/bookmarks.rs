@@ -32,6 +32,7 @@ impl BookmarkService {
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), AppError> {
+        info!("bookmark delete requested: id={}", id);
         if id <= 0 {
             return Err(AppError::bad_request("invalid bookmark id"));
         }
@@ -41,6 +42,7 @@ impl BookmarkService {
             .fetch_optional(&self.deps.db)
             .await?;
         let Some(url) = url else {
+            info!("bookmark delete not found: id={}", id);
             return Err(AppError::not_found("bookmark not found"));
         };
 
@@ -56,6 +58,7 @@ impl BookmarkService {
             .execute(&self.deps.db)
             .await?;
         if result.rows_affected() == 0 {
+            info!("bookmark delete missing row after select: id={}", id);
             return Err(AppError::not_found("bookmark not found"));
         }
 
