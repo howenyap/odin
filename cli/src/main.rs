@@ -1,5 +1,7 @@
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -39,6 +41,15 @@ struct Config {
     admin_token: Option<String>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            base_url: "http://localhost:3000".to_string(),
+            admin_token: None,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct SearchResponse {
     total_hits: u64,
@@ -71,7 +82,10 @@ async fn main() -> Result<()> {
     let config = load_config(&config_path)?;
     let base_url = config.base_url.trim_end_matches('/');
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("failed to build http client")?;
     match cli.command {
         Commands::Config => {
             println!("{}", config_path.display());
@@ -165,7 +179,7 @@ fn default_config_path() -> PathBuf {
 
 fn load_config(path: &Path) -> Result<Config> {
     if !path.exists() {
-        let config = default_config();
+        let config = Config::default();
         write_config(path, &config)?;
         return Ok(config);
     }
@@ -174,13 +188,6 @@ fn load_config(path: &Path) -> Result<Config> {
     let config: Config = serde_json::from_str(&raw)
         .with_context(|| format!("failed to parse config file {}", path.display()))?;
     Ok(config)
-}
-
-fn default_config() -> Config {
-    Config {
-        base_url: "http://localhost:3000".to_string(),
-        admin_token: None,
-    }
 }
 
 fn write_config(path: &Path, config: &Config) -> Result<()> {
@@ -202,7 +209,7 @@ fn auth_header(token: &str) -> Result<HeaderValue> {
     } else {
         format!("Bearer {}", token)
     };
-    HeaderValue::from_str(&value).context("invalid ingest token")
+    HeaderValue::from_str(&value).context("invalid admin token")
 }
 
 async fn handle_response(response: reqwest::Response) -> Result<()> {
@@ -310,5 +317,9 @@ async fn handle_delete_response(response: reqwest::Response, id: i64) -> Result<
 }
 
 fn hyperlink(url: &str, text: &str) -> String {
-    format!("\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\", url, text)
+    if std::io::stdout().is_terminal() {
+        format!("\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\", url, text)
+    } else {
+        text.to_string()
+    }
 }
