@@ -165,12 +165,12 @@ fn default_config() -> Config {
 }
 
 fn write_config(path: &Path, config: &Config) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create config directory {}", parent.display())
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create config directory {}", parent.display())
+        })?;
     }
     let raw =
         serde_json::to_string_pretty(config).context("failed to serialize config file")?;
@@ -211,6 +211,12 @@ async fn handle_query_response(response: reqwest::Response) -> Result<()> {
         println!("No results.");
         return Ok(());
     }
+
+    println!(
+        "Found {} result{}.",
+        response.total_hits,
+        if response.total_hits == 1 { "" } else { "s" }
+    );
 
     for (index, item) in response.results.iter().enumerate() {
         let title = item
