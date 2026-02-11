@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
@@ -22,6 +22,9 @@ enum Commands {
         query: String,
     },
     List,
+    Delete {
+        id: i64,
+    },
     Ingest {
         #[arg(short = 'f', long = "file")]
         file: Option<PathBuf>,
@@ -55,6 +58,7 @@ struct BookmarksResponse {
 
 #[derive(Deserialize)]
 struct BookmarkListItem {
+    id: i64,
     url: String,
     title: Option<String>,
     status: String,
@@ -89,13 +93,28 @@ async fn main() -> Result<()> {
                 .context("failed to send bookmarks request")?;
             handle_bookmarks_response(response).await?;
         }
+        Commands::Delete { id } => {
+            let token = config
+                .admin_token
+                .as_deref()
+                .context("admin_token missing in config; required for delete")?;
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, auth_header(token)?);
+
+            let response = client
+                .delete(format!("{}/v1/bookmarks/{}", base_url, id))
+                .headers(headers)
+                .send()
+                .await
+                .context("failed to send delete request")?;
+            handle_delete_response(response, id).await?;
+        }
         Commands::Ingest { file, urls } => {
             let mut ingest_urls = Vec::new();
             ingest_urls.extend(urls);
             if let Some(path) = file {
-                let contents = fs::read_to_string(&path).with_context(|| {
-                    format!("failed to read ingest file {}", path.display())
-                })?;
+                let contents = fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read ingest file {}", path.display()))?;
                 ingest_urls.extend(
                     contents
                         .lines()
@@ -168,12 +187,10 @@ fn write_config(path: &Path, config: &Config) -> Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create config directory {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create config directory {}", parent.display()))?;
     }
-    let raw =
-        serde_json::to_string_pretty(config).context("failed to serialize config file")?;
+    let raw = serde_json::to_string_pretty(config).context("failed to serialize config file")?;
     fs::write(path, raw)
         .with_context(|| format!("failed to write config file {}", path.display()))?;
     Ok(())
@@ -262,9 +279,33 @@ async fn handle_bookmarks_response(response: reqwest::Response) -> Result<()> {
         } else {
             hyperlink(&item.url, title)
         };
-        println!("{:>2}. {} ({})", index + 1, label, item.status);
+        println!(
+            "{:>2}. {:>6} {} ({})",
+            index + 1,
+            item.id,
+            label,
+            item.status
+        );
     }
 
+    Ok(())
+}
+
+async fn handle_delete_response(response: reqwest::Response, id: i64) -> Result<()> {
+    let status = response.status();
+    let body = response.text().await.context("failed to read response")?;
+    if status == reqwest::StatusCode::NO_CONTENT {
+        println!("Deleted bookmark {}.", id);
+        return Ok(());
+    }
+    if !status.is_success() {
+        anyhow::bail!("request failed with status {}: {}", status, body);
+    }
+    if body.trim().is_empty() {
+        println!("Deleted bookmark {}.", id);
+        return Ok(());
+    }
+    println!("{}", body);
     Ok(())
 }
 
